@@ -92,6 +92,7 @@ type, public :: hor_visc_CS ; private
   logical :: res_scale_MEKE  !< If true, the viscosity contribution from MEKE is scaled by
                              !! the resolution function.
   logical :: use_GME         !< If true, use GME backscatter scheme.
+  logical :: use_BTBS        !< If true, use MEKE barotropic backscatter scheme.
   logical :: answers_2018    !< If true, use the order of arithmetic and expressions that recover the
                              !! answers from the end of 2018.  Otherwise, use updated and more robust
                              !! forms of the same expressions.
@@ -359,6 +360,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   real :: FatH      ! abs(f) at h-point for MEKE source term [T-1 ~> s-1]
   real :: local_strain ! Local variable for interpolating computed strain rates [T-1 ~> s-1].
   real :: meke_res_fn ! A copy of the resolution scaling factor if being applied to MEKE. Otherwise =1.
+  real :: Kh_MEKEtemp ! The value of MEKE%Ku at q points. [L2 T-1 ~> m2 s-1]
   real :: GME_coeff ! The GME (negative) viscosity coefficient [L2 T-1 ~> m2 s-1]
   real :: GME_coeff_limiter ! Maximum permitted value of the GME coefficient [L2 T-1 ~> m2 s-1]
   real :: FWfrac    ! Fraction of maximum theoretical energy transfer to use when scaling GME coefficient [nondim]
@@ -437,6 +439,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
   ! Toggle whether to use a Laplacian viscosity derived from MEKE
   use_MEKE_Ku = allocated(MEKE%Ku)
+  if (CS%use_BTBS .and. .not. use_MEKE_Ku) &
+    call MOM_error(FATAL, "MOM_hor_visc: USE_BTBS requires use_MEKE_Ku to be set.")
   use_MEKE_Au = allocated(MEKE%Au)
 
   rescale_Kh = .false.
@@ -453,8 +457,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
   legacy_bound = (CS%Smagorinsky_Kh .or. CS%Leith_Kh) .and. &
                  (CS%bound_Kh .and. .not.CS%better_bound_Kh)
-
-  if (CS%use_GME) then
+!Point A: Add BTBS flag
+  if (CS%use_GME .or. CS%use_BTBS) then
 
     do j=Jsq-1,Jeq+2 ; do i=Isq-1,Ieq+2
       boundary_mask_h(i,j) = (G%mask2dCu(I,j) * G%mask2dCv(i,J) * G%mask2dCu(I-1,j) * G%mask2dCv(i,J-1))
@@ -507,7 +511,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         sh_xy_bt(I,J) = G%mask2dBu(I,J) * ( dvdx_bt(I,J) + dudy_bt(I,J) )
       enddo ; enddo
     endif
-
+  endif
+  if (CS%use_GME) then
     do j=Jsq-1,Jeq+2 ; do i=Isq-1,Ieq+2
       grad_vel_mag_bt_h(i,j) = G%mask2dT(I,J) * boundary_mask_h(i,j) * (dudx_bt(i,j)**2 + dvdy_bt(i,j)**2 + &
             (0.25*((dvdx_bt(I,J)+dvdx_bt(I-1,J-1))+(dvdx_bt(I,J-1)+dvdx_bt(I-1,J))))**2 + &
@@ -990,8 +995,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         Kh(i,j) = max(Kh(i,j), CS%Kh_bg_min)
       enddo ; enddo
-
-      if (use_MEKE_Ku) then
+!Point D
+      if (use_MEKE_Ku .and. .not. CS%use_BTBS) then
         ! *Add* the MEKE contribution (which might be negative)
         if (CS%res_scale_MEKE) then
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -1053,6 +1058,20 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         str_xx(i,j) = -Kh(i,j) * sh_xx(i,j)
       enddo ; enddo
+
+! Point C insert str_xx with BTBS, add resolution function
+      if (CS%use_BTBS) then
+        if (CS%res_scale_MEKE) then
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            str_xx(i,j) = str_xx(i,j) -MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) *sh_xx_bt(i,j)
+          enddo ; enddo
+        else
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            str_xx(i,j) = str_xx(i,j) -MEKE%Ku(i,j)  * sh_xx_bt(i,j)
+          enddo ; enddo
+        endif
+      endif
+
     else
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         str_xx(i,j) = 0.0
@@ -1308,7 +1327,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
         Kh(I,J) = max(Kh(I,J), CS%Kh_bg_min) ! Place a floor on the viscosity, if desired.
 
-        if (use_MEKE_Ku) then
+        if (use_MEKE_Ku .and. .not. CS%use_BTBS) then
           ! *Add* the MEKE contribution (might be negative)
           Kh(I,J) = Kh(I,J) + 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
                            (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) ) * meke_res_fn
@@ -1342,6 +1361,22 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       do J=js-1,Jeq ; do I=is-1,Ieq
         str_xy(I,J) = -Kh(i,j) * sh_xy(I,J)
       enddo ; enddo
+! Point B insert update of str_xy with BTBS
+      if (CS%use_BTBS) then
+        if (CS%res_scale_MEKE) then
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
+                                 (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
+            str_xy(I,J) = str_xy(I,J) - Kh_MEKEtemp * VarMix%Res_fn_q(I,J)*sh_xy_bt(I,J)
+          enddo ; enddo
+        else
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
+                                 (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
+            str_xy(I,J) = str_xy(I,J) - Kh_MEKEtemp * sh_xy_bt(I,J)
+          enddo ; enddo
+        endif
+      endif
     else
       do J=js-1,Jeq ; do I=is-1,Ieq
         str_xy(I,J) = 0.
@@ -2032,6 +2067,12 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                    "The absolute maximum value the GME coefficient is allowed to take.", &
                    units="m2 s-1", scale=US%m_to_L**2*US%T_to_s, default=1.0e7)
   endif
+
+  call get_param(param_file, mdl, "USE_BTBS", CS%use_BTBS, &
+                 "If true, use the MEKE barotropic backscatter scheme.", &
+                 default=.false.)
+  if (CS%use_BTBS .and. .not. use_MEKE) &
+    call MOM_error(FATAL,"ERROR: USE_MEKE must be true for USE_BTBS ")
 
   if (CS%Laplacian .or. CS%biharmonic) then
     call get_param(param_file, mdl, "DT", dt, &
