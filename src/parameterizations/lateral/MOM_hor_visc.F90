@@ -1068,7 +1068,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
             BS_temph(i,j) = -MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) *sh_xx_bt(i,j)
           enddo ; enddo
 !Inserting new loop for filtered BS:
-          call smooth_GME(CS, G, GME_flux_q=BS_temph)
+          call smooth_GME(CS, G, GME_flux_h=BS_temph)
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
           enddo ; enddo
@@ -1078,7 +1078,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
             BS_temph(i,j) =  -MEKE%Ku(i,j)  * sh_xx_bt(i,j)
           enddo ; enddo
 !Inserting new loop for filtered BS:
-          call smooth_GME(CS, G, GME_flux_q=BS_temph)
+          call smooth_GME(CS, G, GME_flux_h=BS_temph)
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
           enddo ; enddo
@@ -1346,6 +1346,10 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           Kh(I,J) = Kh(I,J) + 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
                            (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) ) * meke_res_fn
         endif
+        ! define KH_BS? = 0.25* the MEKE%Ku terms as above instead of the line
+        ! above (keep in mind Ku is not just BS so rename to something else)
+        !define str_xy_BS? = -Kh_BS*meke_res_fn*sh_xy
+        !smooth that below 
 
         ! Older method of bounding for stability
         if (CS%anisotropic) &
@@ -1371,9 +1375,9 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         if (CS%id_sh_xy_q>0) &
           sh_xy_q(I,J,k) = sh_xy(I,J)
       enddo ; enddo
-
+!This is where the smoothing should happen
       do J=js-1,Jeq ; do I=is-1,Ieq
-        str_xy(I,J) = -Kh(i,j) * sh_xy(I,J)
+        str_xy(I,J) = -Kh(i,j) * sh_xy(I,J) !+str_xy_BS? 
       enddo ; enddo
 ! Point B insert update of str_xy with BTBS
       if (CS%use_BTBS) then
