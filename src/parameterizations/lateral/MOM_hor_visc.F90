@@ -1373,7 +1373,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           do J=js-1,Jeq ; do I=is-1,Ieq
             Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
                                  (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
-            str_xy(I,J) =  str_xy(I,J) - Kh_MEKEtemp * sh_xy_bt(I,J)
+            str_xy(I,J) = str_xy(I,J) - Kh_MEKEtemp * sh_xy_bt(I,J)
           enddo ; enddo
         endif
       endif
@@ -2051,6 +2051,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "Use the split time stepping if true.", default=.true., do_not_log=.true.)
   if (CS%use_GME .and. .not.split) call MOM_error(FATAL,"ERROR: Currently, USE_GME = True "// &
                                            "cannot be used with SPLIT=False.")
+
   if (CS%use_GME) then
     call get_param(param_file, mdl, "GME_NUM_SMOOTHINGS", CS%num_smooth_gme, &
                    "Number of smoothing passes for the GME fluxes.", &
