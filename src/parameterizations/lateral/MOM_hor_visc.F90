@@ -1063,12 +1063,24 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       if (CS%use_BTBS) then
         if (CS%res_scale_MEKE) then
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-            str_xx(i,j) = str_xx(i,j) -MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) *sh_xx_bt(i,j)
+            BS_temph(i,j) = -MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) *sh_xx_bt(i,j)
           enddo ; enddo
+!Inserting new loop for filtered BS:
+          call smooth_GME(CS, G, GME_flux_q=BS_temph)
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
+          enddo ; enddo
+!End of new loop
         else
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-            str_xx(i,j) = str_xx(i,j) -MEKE%Ku(i,j)  * sh_xx_bt(i,j)
+            BS_temph(i,j) =  -MEKE%Ku(i,j)  * sh_xx_bt(i,j)
           enddo ; enddo
+!Inserting new loop for filtered BS:
+          call smooth_GME(CS, G, GME_flux_q=BS_temph)
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
+          enddo ; enddo
+!End of new loop
         endif
       endif
 
@@ -1367,14 +1379,26 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           do J=js-1,Jeq ; do I=is-1,Ieq
             Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
                                  (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
-            str_xy(I,J) = str_xy(I,J) - Kh_MEKEtemp * VarMix%Res_fn_q(I,J)*sh_xy_bt(I,J)
+            BS_tempq(I,J) = - Kh_MEKEtemp * VarMix%Res_fn_q(I,J)*sh_xy_bt(I,J)
           enddo ; enddo
+!Inserting new loop for filtered BS:
+          call smooth_GME(CS, G, GME_flux_q=BS_tempq)
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            str_xy(I,J) = str_xy(I,J) + BS_tempq(I,J)
+          enddo ; enddo
+!End of new loop
         else
           do J=js-1,Jeq ; do I=is-1,Ieq
             Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
                                  (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
-            str_xy(I,J) = str_xy(I,J) - Kh_MEKEtemp * sh_xy_bt(I,J)
+            BS_tempq(I,J) =  - Kh_MEKEtemp * sh_xy_bt(I,J)
           enddo ; enddo
+!Inserting new loop for filtered BS:
+          call smooth_GME(CS, G, GME_flux_q=BS_tempq)
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            str_xy(I,J) = str_xy(I,J) + BS_tempq(I,J)
+          enddo ; enddo
+!End of new loop
         endif
       endif
     else
@@ -2052,10 +2076,10 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   if (CS%use_GME .and. .not.split) call MOM_error(FATAL,"ERROR: Currently, USE_GME = True "// &
                                            "cannot be used with SPLIT=False.")
 
+  call get_param(param_file, mdl, "GME_NUM_SMOOTHINGS", CS%num_smooth_gme, &
+                 "Number of smoothing passes for the GME fluxes.", &
+                 units="nondim", default=1)
   if (CS%use_GME) then
-    call get_param(param_file, mdl, "GME_NUM_SMOOTHINGS", CS%num_smooth_gme, &
-                   "Number of smoothing passes for the GME fluxes.", &
-                   units="nondim", default=1)
     call get_param(param_file, mdl, "GME_H0", CS%GME_h0, &
                    "The strength of GME tapers quadratically to zero when the bathymetric "//&
                    "depth is shallower than GME_H0.", &
