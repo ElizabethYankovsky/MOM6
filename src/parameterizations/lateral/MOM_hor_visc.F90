@@ -282,7 +282,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     grad_d2vel_mag_h, & ! Magnitude of the Laplacian of the velocity vector, squared [L-2 T-2 ~> m-2 s-2]
     GME_effic_h, &  ! The filtered efficiency of the GME terms at h points [nondim]
     htot, &         ! The total thickness of all layers [Z ~> m]
-    boundary_mask_h ! A mask that zeroes out cells with at least one land edge [nondim]
+    boundary_mask_h, & ! A mask that zeroes out cells with at least one land edge [nondim]
+    BS_temph        ! The smoothed diagonal term in the stress tensor from BS [H L2 T-2 ~> m3 s-2 or kg s-2]
 
   real, allocatable, dimension(:,:,:) :: h_diffu ! h x diffu [H L T-2 ~> m2 s-2]
   real, allocatable, dimension(:,:,:) :: h_diffv ! h x diffv [H L T-2 ~> m2 s-2]
@@ -310,7 +311,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                   ! This form guarantees that hq/hu < 4.
     grad_vel_mag_bt_q, &  ! Magnitude of the barotropic velocity gradient tensor squared at q-points [T-2 ~> s-2]
     GME_effic_q, &  ! The filtered efficiency of the GME terms at q points [nondim]
-    boundary_mask_q ! A mask that zeroes out cells with at least one land edge [nondim]
+    boundary_mask_q, & ! A mask that zeroes out cells with at least one land edge [nondim]
+    BS_tempq        ! The smoothed cross term in the stress tensor from BS [H L2 T-2 ~> m3 s-2 or kg s-2]
 
   real, dimension(SZIB_(G),SZJB_(G),SZK_(GV)) :: &
     Ah_q, &      ! biharmonic viscosity at corner points [L4 T-1 ~> m4 s-1]
