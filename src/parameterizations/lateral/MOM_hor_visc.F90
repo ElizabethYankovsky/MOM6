@@ -93,6 +93,7 @@ type, public :: hor_visc_CS ; private
                              !! the resolution function.
   logical :: use_GME         !< If true, use GME backscatter scheme.
   logical :: use_BTBS        !< If true, use MEKE barotropic backscatter scheme.
+  logical :: smooth_BS        !< If true, use smoothing on backscatter.
   logical :: answers_2018    !< If true, use the order of arithmetic and expressions that recover the
                              !! answers from the end of 2018.  Otherwise, use updated and more robust
                              !! forms of the same expressions.
@@ -998,7 +999,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         Kh(i,j) = max(Kh(i,j), CS%Kh_bg_min)
       enddo ; enddo
 !Point D
-      if (use_MEKE_Ku .and. .not. CS%use_BTBS) then
+      if (use_MEKE_Ku .and. .not. CS%use_BTBS .and. .not. CS%smooth_BS) then
         ! *Add* the MEKE contribution (which might be negative)
         if (CS%res_scale_MEKE) then
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -1061,6 +1062,26 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         str_xx(i,j) = -Kh(i,j) * sh_xx(i,j)
       enddo ; enddo
 
+      if (CS%smooth_BS .and. .not. CS%use_BTBS) then
+        if (CS%res_scale_MEKE) then
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            BS_temph(i,j) = -MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) *sh_xx(i,j)
+          enddo ; enddo
+          call smooth_GME(CS, G, GME_flux_h=BS_temph)
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
+          enddo ; enddo
+        else
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            BS_temph(i,j) =  -MEKE%Ku(i,j)  * sh_xx(i,j)
+          enddo ; enddo
+!Inserting new loop for filtered BS:
+          call smooth_GME(CS, G, GME_flux_h=BS_temph)
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
+          enddo ; enddo
+        endif
+      endif
 ! Point C insert str_xx with BTBS, add resolution function
       if (CS%use_BTBS) then
         if (CS%res_scale_MEKE) then
@@ -1068,7 +1089,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
             BS_temph(i,j) = -MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) *sh_xx_bt(i,j)
           enddo ; enddo
 !Inserting new loop for filtered BS:
-          call smooth_GME(CS, G, GME_flux_h=BS_temph)
+         
+          if (CS%smooth_BS) call smooth_GME(CS, G, GME_flux_h=BS_temph)
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
           enddo ; enddo
@@ -1078,7 +1100,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
             BS_temph(i,j) =  -MEKE%Ku(i,j)  * sh_xx_bt(i,j)
           enddo ; enddo
 !Inserting new loop for filtered BS:
-          call smooth_GME(CS, G, GME_flux_h=BS_temph)
+          if (CS%smooth_BS) call smooth_GME(CS, G, GME_flux_h=BS_temph)
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
           enddo ; enddo
@@ -1341,7 +1363,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
         Kh(I,J) = max(Kh(I,J), CS%Kh_bg_min) ! Place a floor on the viscosity, if desired.
 
-        if (use_MEKE_Ku .and. .not. CS%use_BTBS) then
+        if (use_MEKE_Ku .and. .not. CS%use_BTBS .and. .not. CS%smooth_BS) then
           ! *Add* the MEKE contribution (might be negative)
           Kh(I,J) = Kh(I,J) + 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
                            (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) ) * meke_res_fn
@@ -1379,13 +1401,12 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       do J=js-1,Jeq ; do I=is-1,Ieq
         str_xy(I,J) = -Kh(i,j) * sh_xy(I,J) !+str_xy_BS? 
       enddo ; enddo
-! Point B insert update of str_xy with BTBS
-      if (CS%use_BTBS) then
+      if (CS%smooth_BS .and. .not. CS%use_BTBS) then
         if (CS%res_scale_MEKE) then
           do J=js-1,Jeq ; do I=is-1,Ieq
             Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
                                  (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
-            BS_tempq(I,J) = - Kh_MEKEtemp * VarMix%Res_fn_q(I,J)*sh_xy_bt(I,J)
+            BS_tempq(I,J) = - Kh_MEKEtemp * VarMix%Res_fn_q(I,J)*sh_xy(I,J)
           enddo ; enddo
 !Inserting new loop for filtered BS:
           call smooth_GME(CS, G, GME_flux_q=BS_tempq)
@@ -1397,10 +1418,38 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           do J=js-1,Jeq ; do I=is-1,Ieq
             Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
                                  (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
-            BS_tempq(I,J) =  - Kh_MEKEtemp * sh_xy_bt(I,J)
+            BS_tempq(I,J) =  - Kh_MEKEtemp * sh_xy(I,J)
           enddo ; enddo
 !Inserting new loop for filtered BS:
           call smooth_GME(CS, G, GME_flux_q=BS_tempq)
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            str_xy(I,J) = str_xy(I,J) + BS_tempq(I,J)
+          enddo ; enddo
+!End of new loop
+        endif
+      endif
+! Point B insert update of str_xy with BTBS
+      if (CS%use_BTBS) then
+        if (CS%res_scale_MEKE) then
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
+                                 (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
+            BS_tempq(I,J) = - Kh_MEKEtemp * VarMix%Res_fn_q(I,J)*sh_xy_bt(I,J)
+          enddo ; enddo
+!Inserting new loop for filtered BS:
+          if (CS%smooth_BS) call smooth_GME(CS, G, GME_flux_q=BS_tempq)
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            str_xy(I,J) = str_xy(I,J) + BS_tempq(I,J)
+          enddo ; enddo
+!End of new loop
+        else
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
+                                 (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
+            BS_tempq(I,J) =  - Kh_MEKEtemp * sh_xy_bt(I,J)
+          enddo ; enddo
+!Inserting new loop for filtered BS:
+          if (CS%smooth_BS) call smooth_GME(CS, G, GME_flux_q=BS_tempq)
           do J=js-1,Jeq ; do I=is-1,Ieq
             str_xy(I,J) = str_xy(I,J) + BS_tempq(I,J)
           enddo ; enddo
@@ -2100,6 +2149,9 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
 
   call get_param(param_file, mdl, "USE_BTBS", CS%use_BTBS, &
                  "If true, use the MEKE barotropic backscatter scheme.", &
+                 default=.false.)
+  call get_param(param_file, mdl, "SMOOTH_BS", CS%smooth_BS, &
+                 "If true, apply smoothing to backscatter.", &
                  default=.false.)
   if (CS%use_BTBS .and. .not. use_MEKE) &
     call MOM_error(FATAL,"ERROR: USE_MEKE must be true for USE_BTBS ")
