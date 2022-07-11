@@ -47,10 +47,12 @@ type, public :: hor_visc_CS ; private
                              !! limited to guarantee stability.
   logical :: better_bound_Kh !< If true, use a more careful bounding of the
                              !! Laplacian viscosity to guarantee stability.
+  logical :: bound_Kh_with_MEKE !! If true, bounds the Laplacian viscosity using an expression
+                             !< that is proportional to the EKE. 
   logical :: bound_Ah        !< If true, the biharmonic coefficient is locally
                              !! limited to guarantee stability.
   logical :: better_bound_Ah !< If true, use a more careful bounding of the
-                             !! biharmonic viscosity to guarantee stability.
+                             !! biharmonic viscosity to guarantee stability.  
   real    :: Re_Ah           !! If nonzero, the biharmonic coefficient is scaled
                              !< so that the biharmonic Reynolds number is equal to this.
   real    :: bound_coef      !< The nondimensional coefficient of the ratio of
@@ -383,6 +385,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   real :: grad_vort_qg ! QG-based vorticity gradient magnitude [L-1 T-1 ~> m-1 s-1]
   real :: grid_Kh   ! Laplacian viscosity bound by grid [L2 T-1 ~> m2 s-1]
   real :: grid_Ah   ! Biharmonic viscosity bound by grid [L4 T-1 ~> m4 s-1]
+  real :: MEKE_bound ! The theoretical maximum value of viscosity or backscatter coefficients, based on the EKE
 
   logical :: rescale_Kh, legacy_bound
   logical :: find_FrictWork
@@ -927,13 +930,13 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       enddo ; enddo
     endif
 
-    if (CS%better_bound_Ah .or. CS%better_bound_Kh) then
+    if (CS%better_bound_Ah .or. CS%better_bound_Kh .or. CS%bound_Kh_with_MEKE) then
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         h_min = min(h_u(I,j), h_u(I-1,j), h_v(i,J), h_v(i,J-1))
         hrat_min(i,j) = min(1.0, h_min / (h(i,j,k) + h_neglect))
       enddo ; enddo
 
-      if (CS%better_bound_Kh) then
+      if (CS%better_bound_Kh .or. CS%bound_Kh_with_MEKE) then
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           visc_bound_rem(i,j) = 1.0
         enddo ; enddo
@@ -1022,6 +1025,27 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       ! Newer method of bounding for stability
       if (CS%better_bound_Kh) then
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          if (Kh(i,j) >= hrat_min(i,j) * CS%Kh_Max_xx(i,j)) then
+            visc_bound_rem(i,j) = 0.0
+            Kh(i,j) = hrat_min(i,j) * CS%Kh_Max_xx(i,j)
+          else
+            ! ### NOTE: The denominator could be zero here - AJA ###
+            visc_bound_rem(i,j) = 1.0 - Kh(i,j) / (hrat_min(i,j) * CS%Kh_Max_xx(i,j))
+          endif
+        enddo ; enddo
+      endif
+
+      ! Bound for stability using MEKE
+      if (CS%bound_Kh_with_MEKE) then
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          MEKE_bound = 2.0 * CS%bound_Kh_with_MEKE_coef * MEKE%MEKE(i,j) / &
+                      SQRT( 0.5*(div_xx(i,j)**2 + sh_xx(i,j)**2) + &
+                      0.5* (0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) ) )**2 )
+          if (CS%Kh_Max_xx(i,j) > 0) then
+            CS%Kh_Max_xx(i,j) = MIN(CS%Kh_Max_xx(i,j), MEKE_bound)
+	  else
+ 	    CS%Kh_Max_xx(i,j) = MEKE_bound
+          endif
           if (Kh(i,j) >= hrat_min(i,j) * CS%Kh_Max_xx(i,j)) then
             visc_bound_rem(i,j) = 0.0
             Kh(i,j) = hrat_min(i,j) * CS%Kh_Max_xx(i,j)
@@ -1262,13 +1286,13 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           / (h_neglect3 + (h2uq + h2vq) * ((h_u(I,j) + h_u(I,j+1)) + (h_v(i,J) + h_v(i+1,J))))
     enddo ; enddo
 
-    if (CS%better_bound_Ah .or. CS%better_bound_Kh) then
+    if (CS%better_bound_Ah .or. CS%better_bound_Kh .or. CS%bound_Kh_with_MEKE) then
       do J=js-1,Jeq ; do I=is-1,Ieq
         h_min = min(h_u(I,j), h_u(I,j+1), h_v(i,J), h_v(i+1,J))
         hrat_min(I,J) = min(1.0, h_min / (hq(I,J) + h_neglect))
       enddo ; enddo
 
-      if (CS%better_bound_Kh) then
+      if (CS%better_bound_Kh .or. CS%bound_Kh_with_MEKE) then
         do J=js-1,Jeq ; do I=is-1,Ieq
           visc_bound_rem(i,j) = 1.0
         enddo ; enddo
@@ -1387,6 +1411,27 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
             visc_bound_rem(I,J) = 1.0 - Kh(I,J) / (hrat_min(I,J) * CS%Kh_Max_xy(I,J))
           endif
         endif
+
+      ! Bound for stability using MEKE
+      if (CS%bound_Kh_with_MEKE) then
+          MEKE_bound = 2.0 * CS%bound_Kh_with_MEKE_coef * &
+                 0.25 * ( (MEKE%MEKE(i,j) + MEKE%MEKE(i+1,j+1)) + (MEKE%MEKE(i+1,j) + MEKE%MEKE(i,j+1)) ) / &
+                 SQRT( 0.5 * ( (0.25*( (div_xx(i,j)+div_xx(i+1,j+1)) + (div_xx(i+1,j)+div_xx(i,j+1)) )  )**2) + &
+			    (0.25*( (sh_xx(i,j)+sh_xx(i+1,j+1)) + (sh_xx(i+1,j)+sh_xx(i,j+1)) )  )**2) + &
+                       0.5 * sh_xy(I,J)**2 )
+          if (CS%Kh_Max_xy(I,J) > 0) then
+            CS%Kh_Max_xy(I,J) = MIN(CS%Kh_Max_xy(I,J), MEKE_bound)
+	  else
+ 	    CS%Kh_Max_xy(I,J) = MEKE_bound
+          endif 
+          if (Kh(I,J) >= hrat_min(I,J) * CS%Kh_Max_xy(I,J)) then
+            visc_bound_rem(I,J) = 0.0
+            Kh(I,J) = hrat_min(I,J) * CS%Kh_Max_xy(I,J)
+          else
+            ! ### NOTE: The denominator could be zero here - AJA ###
+            visc_bound_rem(I,J) = 1.0 - Kh(I,J) / (hrat_min(I,J) * CS%Kh_Max_xy(I,J))
+          endif
+      endif
 
         if (CS%id_Kh_q>0 .or. CS%debug) &
           Kh_q(I,J,k) = Kh(I,J)
@@ -1975,8 +2020,14 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "If true, the Laplacian coefficient is locally limited "//&
                  "to be stable with a better bounding than just BOUND_KH.", &
                  default=CS%bound_Kh, do_not_log=.not.CS%Laplacian)
+  
+  call get_param(param_file, mdl, "BOUND_KH_WITH_MEKE", CS%bound_Kh_with_MEKE, &
+                 "If true, bounds the Laplacian viscosity using an expression "//&
+                 "that is proportional to the EKE. ", &
+                 default=.false., do_not_log=.not.CS%Laplacian)
   if (.not.CS%Laplacian) CS%bound_Kh = .false.
   if (.not.CS%Laplacian) CS%better_bound_Kh = .false.
+  if (.not.(CS%Laplacian.and.use_MEKE)) CS%bound_Kh_with_MEKE = .false.
   call get_param(param_file, mdl, "ANISOTROPIC_VISCOSITY", CS%anisotropic, &
                  "If true, allow anistropic viscosity in the Laplacian "//&
                  "horizontal viscosity.", default=.false., &
@@ -2107,6 +2158,10 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "viscosity bounds to the theoretical maximum for "//&
                  "stability without considering other terms.", units="nondim", &
                  default=0.8, do_not_log=.not.(CS%better_bound_Ah .or. CS%better_bound_Kh))
+  call get_param(param_file, mdl, "BOUND_KH_WITH_MEKE_COEF", CS%bound_Kh_with_MEKE_coef, &
+                 "A nondimensional coefficient to make the MEKE bound on the Laplacian "//&
+                 "viscosity stricter.", units="nondim", &
+                 default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
   call get_param(param_file, mdl, "NOSLIP", CS%no_slip, &
                  "If true, no slip boundary conditions are used; otherwise "//&
                  "free slip boundary conditions are assumed. The "//&
@@ -2185,7 +2240,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
     ALLOC_(CS%grid_sp_h2(isd:ied,jsd:jed))   ; CS%grid_sp_h2(:,:) = 0.0
     ALLOC_(CS%Kh_bg_xx(isd:ied,jsd:jed))     ; CS%Kh_bg_xx(:,:) = 0.0
     ALLOC_(CS%Kh_bg_xy(IsdB:IedB,JsdB:JedB)) ; CS%Kh_bg_xy(:,:) = 0.0
-    if (CS%bound_Kh .or. CS%better_bound_Kh) then
+    if (CS%bound_Kh .or. CS%better_bound_Kh .or. CS%bound_Kh_with_MEKE) then
       ALLOC_(CS%Kh_Max_xx(Isd:Ied,Jsd:Jed)) ; CS%Kh_Max_xx(:,:) = 0.0
       ALLOC_(CS%Kh_Max_xy(IsdB:IedB,JsdB:JedB)) ; CS%Kh_Max_xy(:,:) = 0.0
     endif
@@ -2325,7 +2380,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         ! Limit the background viscosity to be numerically stable
         CS%Kh_Max_xx(i,j) = Kh_Limit * grid_sp_h2
         CS%Kh_bg_xx(i,j) = MIN(CS%Kh_bg_xx(i,j), CS%Kh_Max_xx(i,j))
-      endif
+      endif  
       min_grid_sp_h2 = min(grid_sp_h2, min_grid_sp_h2)
     enddo ; enddo
     call min_across_PEs(min_grid_sp_h2)
