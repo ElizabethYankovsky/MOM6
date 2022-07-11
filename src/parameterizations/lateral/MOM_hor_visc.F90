@@ -59,6 +59,9 @@ type, public :: hor_visc_CS ; private
                              !! the viscosity bounds to the theoretical maximum
                              !! for stability without considering other terms [nondim].
                              !! The default is 0.8.
+  real    :: bound_Kh_with_MEKE_coef  !< A nondimensional coefficient to make the MEKE bound on the Laplacian
+                             !! viscosity stricter.
+                             !! The default is 1.0.
   logical :: Smagorinsky_Kh  !< If true, use Smagorinsky nonlinear eddy
                              !! viscosity. KH is the background value.
   logical :: Smagorinsky_Ah  !< If true, use a biharmonic form of Smagorinsky
@@ -386,6 +389,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   real :: grid_Kh   ! Laplacian viscosity bound by grid [L2 T-1 ~> m2 s-1]
   real :: grid_Ah   ! Biharmonic viscosity bound by grid [L4 T-1 ~> m4 s-1]
   real :: MEKE_bound ! The theoretical maximum value of viscosity or backscatter coefficients, based on the EKE
+  real :: Kh_Max_temp ! Dummy variable for Kh_Max
+  real :: eps       ! A small value for avoiding divide by zero errors.
 
   logical :: rescale_Kh, legacy_bound
   logical :: find_FrictWork
@@ -423,6 +428,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   inv_PI3 = 1.0/((4.0*atan(1.0))**3)
   inv_PI2 = 1.0/((4.0*atan(1.0))**2)
   inv_PI6 = inv_PI3 * inv_PI3
+  eps =1. ; eps = epsilon(eps)
 
   if (present(OBC)) then ; if (associated(OBC)) then ; if (OBC%OBC_pe) then
     apply_OBC = OBC%Flather_u_BCs_exist_globally .or. OBC%Flather_v_BCs_exist_globally
@@ -1040,18 +1046,19 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           MEKE_bound = 2.0 * CS%bound_Kh_with_MEKE_coef * MEKE%MEKE(i,j) / &
                       SQRT( 0.5*(div_xx(i,j)**2 + sh_xx(i,j)**2) + &
-                      0.5* (0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) ) )**2 )
-          if (CS%Kh_Max_xx(i,j) > 0) then
-            CS%Kh_Max_xx(i,j) = MIN(CS%Kh_Max_xx(i,j), MEKE_bound)
-	  else
- 	    CS%Kh_Max_xx(i,j) = MEKE_bound
+                      0.5* (0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) ) )**2 + eps)
+          Kh_Max_temp = CS%Kh_Max_xx(i,j)
+          if (Kh_Max_temp > 0) then
+            Kh_Max_temp = MIN(Kh_Max_temp, MEKE_bound)
+          else
+            Kh_Max_temp = MEKE_bound
           endif
-          if (Kh(i,j) >= hrat_min(i,j) * CS%Kh_Max_xx(i,j)) then
+          if (Kh(i,j) >= hrat_min(i,j) * Kh_Max_temp) then
             visc_bound_rem(i,j) = 0.0
-            Kh(i,j) = hrat_min(i,j) * CS%Kh_Max_xx(i,j)
+            Kh(i,j) = hrat_min(i,j) * Kh_Max_temp
           else
             ! ### NOTE: The denominator could be zero here - AJA ###
-            visc_bound_rem(i,j) = 1.0 - Kh(i,j) / (hrat_min(i,j) * CS%Kh_Max_xx(i,j))
+            visc_bound_rem(i,j) = 1.0 - Kh(i,j) / (hrat_min(i,j) * Kh_Max_temp)
           endif
         enddo ; enddo
       endif
@@ -1416,20 +1423,21 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       if (CS%bound_Kh_with_MEKE) then
           MEKE_bound = 2.0 * CS%bound_Kh_with_MEKE_coef * &
                  0.25 * ( (MEKE%MEKE(i,j) + MEKE%MEKE(i+1,j+1)) + (MEKE%MEKE(i+1,j) + MEKE%MEKE(i,j+1)) ) / &
-                 SQRT( 0.5 * ( (0.25*( (div_xx(i,j)+div_xx(i+1,j+1)) + (div_xx(i+1,j)+div_xx(i,j+1)) )  )**2) + &
-			    (0.25*( (sh_xx(i,j)+sh_xx(i+1,j+1)) + (sh_xx(i+1,j)+sh_xx(i,j+1)) )  )**2) + &
-                       0.5 * sh_xy(I,J)**2 )
-          if (CS%Kh_Max_xy(I,J) > 0) then
-            CS%Kh_Max_xy(I,J) = MIN(CS%Kh_Max_xy(I,J), MEKE_bound)
-	  else
- 	    CS%Kh_Max_xy(I,J) = MEKE_bound
+                 SQRT( 0.5 * ( (0.25*( (div_xx(i,j)+div_xx(i+1,j+1)) + (div_xx(i+1,j)+div_xx(i,j+1)) )  )**2 + &
+                 (0.25*( (sh_xx(i,j)+sh_xx(i+1,j+1)) + (sh_xx(i+1,j)+sh_xx(i,j+1)) )  )**2) + &
+                 0.5 * sh_xy(I,J)**2 + eps)
+          Kh_Max_temp = CS%Kh_Max_xy(I,J)
+          if (Kh_Max_temp > 0) then
+            Kh_Max_temp = MIN(Kh_Max_temp, MEKE_bound)
+           else
+             Kh_Max_temp = MEKE_bound
           endif 
-          if (Kh(I,J) >= hrat_min(I,J) * CS%Kh_Max_xy(I,J)) then
+          if (Kh(I,J) >= hrat_min(I,J) * Kh_Max_temp) then
             visc_bound_rem(I,J) = 0.0
-            Kh(I,J) = hrat_min(I,J) * CS%Kh_Max_xy(I,J)
+            Kh(I,J) = hrat_min(I,J) * Kh_Max_temp
           else
             ! ### NOTE: The denominator could be zero here - AJA ###
-            visc_bound_rem(I,J) = 1.0 - Kh(I,J) / (hrat_min(I,J) * CS%Kh_Max_xy(I,J))
+            visc_bound_rem(I,J) = 1.0 - Kh(I,J) / (hrat_min(I,J) * Kh_Max_temp)
           endif
       endif
 
