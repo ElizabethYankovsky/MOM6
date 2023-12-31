@@ -468,6 +468,10 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
   visc_limit_h(:,:,:) = 0.
   visc_limit_q(:,:,:) = 0.
+  visc_limit_h_flag(:,:,:) = 0.
+  visc_limit_q_flag(:,:,:) = 0.
+  visc_limit_h_frac(:,:,:) = 0.
+  visc_limit_q_frac(:,:,:) = 0.
 
   if (present(OBC)) then ; if (associated(OBC)) then ; if (OBC%OBC_pe) then
     apply_OBC = OBC%Flather_u_BCs_exist_globally .or. OBC%Flather_v_BCs_exist_globally
@@ -1196,7 +1200,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         endif
       endif
 
-      visc_limit_h_flag(:,:,:) = 0.
+      !visc_limit_h_flag(:,:,:) = 0. CAUSES DIAG ERROR BECAUSE WE'RE IN K LOOP HERE
       if (CS%bound_Kh_with_MEKE) then
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             tmp = CS%KS_coef * hrat_min(i,j) * CS%Ah_Max_xx_KS(i,j)
@@ -1537,7 +1541,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         endif
       endif
 
-      visc_limit_q_flag(:,:,:) = 0.
+      !visc_limit_q_flag(:,:,:) = 0. leads to diag error, we're in the k loop here!
       if (CS%bound_Kh_with_MEKE) then
           do J=js-1,Jeq ; do I=is-1,Ieq
             tmp = CS%KS_coef *hrat_min(I,J) * CS%Ah_Max_xy_KS(I,J)
